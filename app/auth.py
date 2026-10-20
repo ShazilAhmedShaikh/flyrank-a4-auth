@@ -78,3 +78,27 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
+
+def require_admin(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """
+    Authorization guard for administrative routes (Stretch Goal: 403 Forbidden).
+    Distinguishes Authentication (401: who are you?) from Authorization (403: permission denied).
+    """
+    user_metadata = current_user.get("user_metadata") or {}
+    app_metadata = current_user.get("app_metadata") or {}
+    email = (current_user.get("email") or "").lower()
+
+    is_admin = (
+        user_metadata.get("role") == "admin"
+        or app_metadata.get("role") == "admin"
+        or email.endswith("@admin.flyrank.com")
+        or email == "admin@flyrank.com"
+    )
+
+    if not is_admin:
+        logger.warning("403 Forbidden: User %s (%s) attempted admin access", current_user.get("id"), email)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Admin access required"
+        )
+    return current_user
