@@ -8,7 +8,12 @@ from app.config import logger
 from app.supabase_client import get_supabase_client
 
 # auto_error=False ensures we can return custom {"error": "Access token required"}
-bearer_scheme = HTTPBearer(auto_error=False)
+# bearerFormat="JWT" enables Swagger UI to display Bearer JWT in the Authorize modal
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    bearerFormat="JWT",
+    description="Enter your Supabase access token (JWT)"
+)
 
 def extract_bearer_token(request: Request, credentials: Optional[HTTPAuthorizationCredentials]) -> str:
     """
