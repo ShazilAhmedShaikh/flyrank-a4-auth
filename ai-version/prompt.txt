@@ -1,0 +1,11 @@
+PROMPT GIVEN TO AI ASSISTANT:
+--------------------------------
+"Create a secure authentication API in Python using FastAPI and Supabase.
+I need five routes:
+1. POST /auth/signup (expects email, password in JSON body; returns 201 Created on success, 400 Bad Request if email/password is missing).
+2. POST /auth/login (expects email, password in JSON body; returns 200 OK with access_token and refresh_token, 400 on empty fields, 401 on invalid credentials).
+3. POST /auth/logout (protected endpoint, logs out user from Supabase and returns 204 No Content).
+4. GET /public/info (open to anyone without auth; returns 200 OK with message).
+5. GET /protected/profile (protected endpoint; extracts Bearer token from Authorization header and verifies it with Supabase get_user; returns 200 with user safe metadata, or 401 with JSON error on invalid/expired/missing token).
+6. GET /protected/dashboard (second protected endpoint reusing the same guard).
+Use an auth middleware or FastAPI dependency for token extraction and verification. Configure Swagger UI with HTTPBearer so the padlock icon works at /docs. Read SUPABASE_URL and SUPABASE_KEY from environment variables (.env)."

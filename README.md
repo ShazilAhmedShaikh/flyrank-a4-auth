@@ -198,13 +198,29 @@ Because JWTs are self-contained and cryptographically signed, any server possess
 
 In Stage 7, an independent prompt was provided to an LLM in quarantine (`ai-version/app.py`) to build the same API without seeing this codebase.
 
+### Full Prompt Specified:
+```text
+"Create a secure authentication API in Python using FastAPI and Supabase.
+I need five routes:
+1. POST /auth/signup (expects email, password in JSON body; returns 201 Created on success, 400 Bad Request if email/password is missing).
+2. POST /auth/login (expects email, password in JSON body; returns 200 OK with access_token and refresh_token, 400 on empty fields, 401 on invalid credentials).
+3. POST /auth/logout (protected endpoint, logs out user from Supabase and returns 204 No Content).
+4. GET /public/info (open to anyone without auth; returns 200 OK with message).
+5. GET /protected/profile (protected endpoint; extracts Bearer token from Authorization header and verifies it with Supabase get_user; returns 200 with user safe metadata, or 401 with JSON error on invalid/expired/missing token).
+6. GET /protected/dashboard (second protected endpoint reusing the same guard).
+Use an auth middleware or FastAPI dependency for token extraction and verification. Configure Swagger UI with HTTPBearer so the padlock icon works at /docs. Read SUPABASE_URL and SUPABASE_KEY from environment variables (.env)."
+```
+
 ### AI Implementation Flaws & Critical Differences:
-1. **Header Parsing Vulnerability**:
-   - *AI Code*: Performed naive `request.headers.get("Authorization").split(" ")[1]` without checking array length or whitespace. An incoming `Authorization: Bearer` or `Authorization: InvalidHeader` raised an unhandled `IndexError`, causing an internal `500 Internal Server Error` instead of a clean `401 {"error": "Access token required"}`.
-   - *Our Implementation*: Uses defensive parsing with explicit validation for scheme, length, and non-empty token string.
-2. **Missing Input Validation & Status Codes**:
-   - *AI Code*: Defaulted to FastAPI Pydantic schema validation which responds with HTTP `422 Unprocessable Entity` containing verbose stack objects. The assignment strictly required `400 Bad Request` with `{"error": "..."}`.
-   - *Our Implementation*: Implements custom FastAPI exception handlers and input cleaners ensuring strict compliance with `400` status codes.
+1. **Header Parsing Vulnerability (`IndexError` on Malformed Header)**:
+   - *AI Code*: Performed naive `authorization.split(" ")[1]` without checking array length or whitespace. An incoming `Authorization: Bearer` or `Authorization: InvalidHeader` raised an unhandled `IndexError`, crashing the worker process with an HTTP `500 Internal Server Error` instead of a clean `401 {"error": "Access token required"}`.
+   - *Our Implementation*: Uses defensive parsing with explicit validation for scheme, length, and non-empty token string, safely handling edge cases like `Bearer   `, tabs, or non-bearer formats.
+2. **Missing Input Validation & Status Codes (422 vs 400)**:
+   - *AI Code*: Relied purely on standard Pydantic type hints without custom exception handling. When a client sent `{}` or missing fields, FastAPI responded with HTTP `422 Unprocessable Entity` containing verbose stack objects. The assignment strictly required `400 Bad Request` with `{"error": "..."}`.
+   - *Our Implementation*: Implements custom FastAPI exception handlers and input cleaners ensuring strict compliance with `400` status codes across all failure modes.
 3. **Leaked Error Traces & Missing Error Trapping**:
-   - *AI Code*: Did not catch Supabase `AuthApiError` specifically, letting database and SDK traces leak directly into client responses.
-   - *Our Implementation*: Traps Supabase auth errors cleanly, logging security events internally while returning sanitized, standardized error JSON to clients.
+   - *AI Code*: Did not catch Supabase `AuthApiError` specifically, letting unhandled library exceptions trigger raw HTTP 500 server errors when credentials failed or tokens were corrupted.
+   - *Our Implementation*: Traps Supabase auth errors cleanly, logging security events internally while returning sanitized, standardized error JSON (`{"error": "Invalid login credentials"}` or `{"error": "Invalid or expired token"}`) to clients.
+4. **Rematch Prompt Improvement**:
+   - *Enhanced Prompt*: Added explicit requirements: `"Ensure all validation errors return HTTP 400 with a JSON object containing an 'error' key, handle missing Bearer token safely without IndexErrors, and catch Supabase AuthApiError with clean 401 status codes."`
+   - *Result*: The regenerated code adopted custom exception handlers and defensive token slicing, proving that AI code quality is strictly a function of specification precision.
