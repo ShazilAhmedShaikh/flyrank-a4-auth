@@ -7,7 +7,7 @@ from supabase_auth.errors import AuthApiError, AuthError
 
 from app.config import logger, PORT, HOST
 from app.supabase_client import get_supabase_client
-from app.models import AuthCredentials, ErrorResponse, TokenResponse, MessageResponse
+from app.models import AuthCredentials, ErrorResponse, TokenResponse, MessageResponse, UserMetadata
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -169,18 +169,51 @@ def extract_token_from_header(authorization: Optional[str]) -> str:
         )
     return parts[1].strip()
 
+# -------------------------------------------------------------
+# STAGE 3: THE GUARD: TOKEN VERIFICATION
+# -------------------------------------------------------------
+
 @app.get(
     "/protected/profile",
     status_code=status.HTTP_200_OK,
-    summary="User profile (unverified gate check in Stage 2)",
+    summary="Read private user profile (verified via Supabase)",
     responses={
-        200: {"description": "Access token presented"},
-        401: {"model": ErrorResponse, "description": "Access token required"}
+        200: {"model": UserMetadata, "description": "Safe user profile metadata"},
+        401: {"model": ErrorResponse, "description": "Invalid, expired, or missing token"}
     }
 )
-def protected_profile_unverified(authorization: Optional[str] = Header(None)):
+def protected_profile_verified(
+    authorization: Optional[str] = Header(None),
+    client=Depends(get_supabase_client)
+):
     token = extract_token_from_header(authorization)
-    return {"message": "Token presented", "token": token}
+    try:
+        user_response = client.auth.get_user(token)
+        if not user_response or not user_response.user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token"
+            )
+        user = user_response.user
+        return {
+            "id": user.id,
+            "email": user.email,
+            "created_at": user.created_at
+        }
+    except (AuthApiError, AuthError) as exc:
+        logger.warning("Token verification failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token"
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Unexpected token verification error: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token"
+        )
 
 if __name__ == "__main__":
     import uvicorn

@@ -24,8 +24,16 @@ def test_protected_profile_malformed_header(client):
     assert response.status_code == 401
     assert response.json() == {"error": "Access token required"}
 
-def test_protected_profile_token_presented_stage2(client):
-    response = client.get("/protected/profile", headers={"Authorization": "Bearer sample_token_string"})
+def test_protected_profile_valid_token(client):
+    response = client.get("/protected/profile", headers={"Authorization": "Bearer valid.test.jwt"})
     assert response.status_code == 200
     data = response.json()
-    assert "token" in data
+    assert data["id"] == "usr-12345"
+    assert data["email"] == "test@example.com"
+    assert "created_at" in data
+
+def test_protected_profile_tampered_token(client):
+    # Change one character: valid.test.jwX instead of valid.test.jwt
+    response = client.get("/protected/profile", headers={"Authorization": "Bearer valid.test.jwX"})
+    assert response.status_code == 401
+    assert response.json() == {"error": "Invalid or expired token"}
