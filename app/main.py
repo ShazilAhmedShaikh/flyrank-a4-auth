@@ -1,13 +1,20 @@
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
-from fastapi import FastAPI, HTTPException, Request, Depends, status, Header
+from fastapi import FastAPI, HTTPException, Request, Depends, status, Response
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from supabase_auth.errors import AuthApiError, AuthError
 
 from app.config import logger, PORT, HOST
 from app.supabase_client import get_supabase_client
-from app.models import AuthCredentials, ErrorResponse, TokenResponse, MessageResponse, UserMetadata
+from app.models import (
+    AuthCredentials,
+    ErrorResponse,
+    TokenResponse,
+    MessageResponse,
+    UserMetadata
+)
+from app.auth import get_current_user
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -143,7 +150,7 @@ def login(credentials: AuthCredentials, client=Depends(get_supabase_client)):
         )
 
 # -------------------------------------------------------------
-# STAGE 2: THE PUBLIC & PROTECTED GATES
+# STAGE 2: PUBLIC GATE
 # -------------------------------------------------------------
 
 @app.get(
@@ -155,65 +162,63 @@ def login(credentials: AuthCredentials, client=Depends(get_supabase_client)):
 def public_info():
     return {"message": "Welcome stranger! This info is public."}
 
-def extract_token_from_header(authorization: Optional[str]) -> str:
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access token required"
-        )
-    parts = authorization.strip().split(" ", 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access token required"
-        )
-    return parts[1].strip()
-
 # -------------------------------------------------------------
-# STAGE 3: THE GUARD: TOKEN VERIFICATION
+# STAGE 4: REUSABLE MIDDLEWARE / DEPENDENCY ROUTES & LOGOUT
 # -------------------------------------------------------------
 
 @app.get(
     "/protected/profile",
     status_code=status.HTTP_200_OK,
-    summary="Read private user profile (verified via Supabase)",
+    summary="Read private user profile (guarded by reusable auth dependency)",
     responses={
         200: {"model": UserMetadata, "description": "Safe user profile metadata"},
         401: {"model": ErrorResponse, "description": "Invalid, expired, or missing token"}
     }
 )
-def protected_profile_verified(
-    authorization: Optional[str] = Header(None),
+def protected_profile(current_user: Dict[str, Any] = Depends(get_current_user)):
+    return {
+        "id": current_user["id"],
+        "email": current_user.get("email"),
+        "created_at": current_user.get("created_at")
+    }
+
+@app.get(
+    "/protected/dashboard",
+    status_code=status.HTTP_200_OK,
+    summary="Second protected route proving guard reuse",
+    responses={
+        200: {"description": "Dashboard data accessed successfully"},
+        401: {"model": ErrorResponse, "description": "Invalid, expired, or missing token"}
+    }
+)
+def protected_dashboard(current_user: Dict[str, Any] = Depends(get_current_user)):
+    return {
+        "message": f"Welcome to your dashboard, {current_user.get('email')}!",
+        "user_id": current_user["id"],
+        "analytics": {
+            "audits_completed": 12,
+            "rank_score": 98.5
+        }
+    }
+
+@app.post(
+    "/auth/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Log out user and end session (guarded)",
+    responses={
+        204: {"description": "Successfully logged out"},
+        401: {"model": ErrorResponse, "description": "Invalid, expired, or missing token"}
+    }
+)
+def logout(
+    current_user: Dict[str, Any] = Depends(get_current_user),
     client=Depends(get_supabase_client)
 ):
-    token = extract_token_from_header(authorization)
     try:
-        user_response = client.auth.get_user(token)
-        if not user_response or not user_response.user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token"
-            )
-        user = user_response.user
-        return {
-            "id": user.id,
-            "email": user.email,
-            "created_at": user.created_at
-        }
-    except (AuthApiError, AuthError) as exc:
-        logger.warning("Token verification failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token"
-        )
-    except HTTPException:
-        raise
+        client.auth.sign_out()
     except Exception as exc:
-        logger.error("Unexpected token verification error: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token"
-        )
+        logger.warning("Supabase sign_out error (treated as idempotent): %s", exc)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 if __name__ == "__main__":
     import uvicorn
