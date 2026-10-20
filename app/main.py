@@ -1,17 +1,16 @@
 from contextlib import asynccontextmanager
-from typing import Dict, Any
-from fastapi import FastAPI, HTTPException, Request, Depends, status
+from typing import Dict, Any, Optional
+from fastapi import FastAPI, HTTPException, Request, Depends, status, Header
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from supabase_auth.errors import AuthApiError, AuthError
 
 from app.config import logger, PORT, HOST
 from app.supabase_client import get_supabase_client
-from app.models import AuthCredentials, ErrorResponse, TokenResponse
+from app.models import AuthCredentials, ErrorResponse, TokenResponse, MessageResponse
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize Supabase client and log connection status
     try:
         get_supabase_client()
         logger.info("Server running and connected to Supabase")
@@ -27,7 +26,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Custom exception handlers ensuring {"error": "..."} format on all failures
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     if isinstance(exc.detail, dict) and "error" in exc.detail:
@@ -63,7 +61,6 @@ def health_check():
     }
 )
 def signup(credentials: AuthCredentials, client=Depends(get_supabase_client)):
-    # Validate: if email or password is missing or empty, return 400
     if not credentials.email or not credentials.email.strip() or not credentials.password or not credentials.password.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -106,7 +103,6 @@ def signup(credentials: AuthCredentials, client=Depends(get_supabase_client)):
     }
 )
 def login(credentials: AuthCredentials, client=Depends(get_supabase_client)):
-    # Validate empty fields -> 400
     if not credentials.email or not credentials.email.strip() or not credentials.password or not credentials.password.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -145,6 +141,46 @@ def login(credentials: AuthCredentials, client=Depends(get_supabase_client)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid login credentials"
         )
+
+# -------------------------------------------------------------
+# STAGE 2: THE PUBLIC & PROTECTED GATES
+# -------------------------------------------------------------
+
+@app.get(
+    "/public/info",
+    status_code=status.HTTP_200_OK,
+    summary="Public info endpoint",
+    response_model=MessageResponse
+)
+def public_info():
+    return {"message": "Welcome stranger! This info is public."}
+
+def extract_token_from_header(authorization: Optional[str]) -> str:
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token required"
+        )
+    parts = authorization.strip().split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token required"
+        )
+    return parts[1].strip()
+
+@app.get(
+    "/protected/profile",
+    status_code=status.HTTP_200_OK,
+    summary="User profile (unverified gate check in Stage 2)",
+    responses={
+        200: {"description": "Access token presented"},
+        401: {"model": ErrorResponse, "description": "Access token required"}
+    }
+)
+def protected_profile_unverified(authorization: Optional[str] = Header(None)):
+    token = extract_token_from_header(authorization)
+    return {"message": "Token presented", "token": token}
 
 if __name__ == "__main__":
     import uvicorn
